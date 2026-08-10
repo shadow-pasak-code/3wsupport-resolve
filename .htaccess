@@ -1,0 +1,44 @@
+RewriteEngine On
+
+# Force HTTPS (ถ้าต้องการ)
+# RewriteCond %{HTTPS} !=on
+# RewriteCond %{REQUEST_URI} !^/preview
+# RewriteCond %{QUERY_STRING} !^/preview
+# RewriteRule ^(.*)$ http://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# ถ้าไฟล์หรือโฟลเดอร์ไม่มีอยู่จริง ให้ส่งไปที่ index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php/$1 [L]
+
+# ตั้งค่า max_file_uploads (ใช้ได้เฉพาะ Apache mod_php)
+<IfModule mod_php.c>
+    php_value max_file_uploads 1000
+    php_value upload_max_filesize 20M       # ตั้งค่าขนาดไฟล์สูงสุดที่สามารถอัปโหลดได้
+    php_value post_max_size 25M            # ขนาดรวมของข้อมูลโพสต์
+    php_value max_execution_time 300       # เวลาในการรอการประมวลผล
+    php_value max_input_time 300
+</IfModule>
+
+# กำหนดให้ Apache อนุญาตการเข้าถึงไฟล์ .tif
+<FilesMatch "\.(tif|tiff)$">
+    SetHandler default-handler
+</FilesMatch>
+
+# ป้องกันการเข้าถึงไฟล์ที่ไม่ได้รับอนุญาต
+# <IfModule authz_core_module>
+#     Require all denied
+# </IfModule>
+# <IfModule !authz_core_module>
+#     Deny from all
+# </IfModule>
+
+# ป้องกันการเข้าถึงไฟล์ .htaccess
+<Files .htaccess>
+    Require all denied
+</Files>
+
+# ป้องกันการเข้าถึงไฟล์ .env
+<Files .env>
+    Require all denied
+</Files>

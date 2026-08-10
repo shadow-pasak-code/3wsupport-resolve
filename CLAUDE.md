@@ -1,0 +1,86 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+"3W Support" — an after-sales / repair-ticket management system for Three W Business and Solutions, built on **CodeIgniter 3** (PHP, MVC, no build step, no package.json). There is no test suite, linter, or CI configured — verification is manual (browse the running app / check `application/logs`).
+
+The system serves three roles from one codebase: **admin** (staff), **technician**, and **partner** (external repair vendor), plus a public-facing **LINE OA chatbot** that customers use to file and track repair tickets.
+
+## Running it locally
+
+This is a classic XAMPP/Apache + MySQL PHP app — no CLI dev server, no build/watch process.
+
+- Serve the repo root through Apache (e.g. XAMPP `htdocs`), with `mod_rewrite` enabled (`.htaccess` routes all non-file/dir requests through `index.php`).
+- Import a schema from `db/` (e.g. `db/rtaf_3wsupport (1).sql`) into MySQL as `rtaf_3wsupport`.
+- DB credentials: `application/config/database.php` (default `root` / no password / `rtaf_3wsupport`, `mysqli`, `utf8mb4`).
+- Site base URL: `application/config/config.php` (`$config['base_url']`) — update to match your local path.
+- Third-party integrations (LINE Messaging API tokens, OpenRouter/Gemini API key) live in `application/config/app_config.php`. **This file currently contains live secrets committed in plaintext** (LINE channel token/secret, OpenRouter API key) — treat it as sensitive, don't paste its contents elsewhere, and prefer moving secrets out of version control if you're asked to touch this file.
+- There is a duplicate `config.php`/`database.php` pair at the repo root — these are **not** the files CodeIgniter loads (CI only reads `application/config/*`); ignore the root copies unless specifically asked about them.
+- Ignore the stray root-level `test_gemini.php`, `test_partner.php`, and `phpinfo.php` — they're ad hoc debug scripts, not part of the app.
+
+## Architecture
+
+### Role-based controller hierarchy
+
+`application/core/MY_Controller.php` defines the whole auth/rendering model in one small file — read it before touching any controller:
+
+- `MY_Controller` (extends `CI_Controller`): loads `app_config` + `session`, pulls the logged-in user from `session->userdata('user')` into `$this->current_user`, and provides `render($view, $data, $layout)` which injects `current_user` and renders through a layout view.
+- `Admin_Controller`, `Tech_Controller`, `Partner_Controller` each extend `MY_Controller`, gate access by `$this->current_user['role']` (redirecting to `login` if unset/mismatched), and override `render()` to prefix the view path with `admin/`, `technician/`, or `partner/` respectively and always use the single shared layout `admin/layout/main`.
+- Each role's views live under its own top-level folder, sibling to `admin/` — a technician controller's `render('history/index')` resolves to `application/views/technician/history/index.php`, a partner controller's to `application/views/partner/...`, **not** nested under `application/views/admin/`. Only the shared layout itself (`admin/layout/main.php`, plus its `_notif_panel_body.php` partial) lives under `views/admin/`; every role's `render()` points its `$layout` argument there regardless of role, and the sidebar inside it switches nav items based on `$current_user['role']`.
+- Controllers that must NOT be gated (e.g. `admin/Auth.php` — login/logout, and `api/Line_webhook.php`) extend `CI_Controller` directly, not one of the role controllers.
+
+Pick the right base class by directory convention: `controllers/admin/*` → `Admin_Controller`, `controllers/technician/*` → `Tech_Controller`, `controllers/partner/*` → `Partner_Controller`.
+
+### Users, roles, and role-specific profile tables
+
+Auth is username/password (`password_hash`/`password_verify`) against a single `users` table (`User_model::login`). `users.role` is one of `admin` / `technician` / `partner`, and `users.ref_id` points at the corresponding row in `technicians` or `partners` (there's no `ref_id` link needed for admin). Ticket joins frequently do `LEFT JOIN users u ON u.ref_id = t.technician_id AND u.role = 'technician'` — keep that pattern in mind when writing new queries that need a technician's/partner's display name.
+
+### Tickets: the core domain object
+
+`application/models/Ticket_model.php` defines the full ticket status lifecycle as class constants (`STATUS_PENDING` → `APPROVED` → `ASSIGNED` → `IN_PROGRESS`/`WAITING_PARTS` / `WAIT_QUOTE` → `WAIT_CONFIRM` → `QUOTE_ACCEPTED`/`QUOTE_REJECTED` → `ESCALATED` → `COMPLETED` → `CLOSED`). Always reference these constants (`Ticket_model::STATUS_*`) rather than hardcoding status strings in new code — existing controllers are inconsistent about this (some use the constant, some use a raw string like `'wait_confirm'`), don't add to that. Any new status value must also be added to the `tickets.status` ENUM via `ALTER TABLE` (see `CHANGELOG.md`'s note on this — CI3 silently stores an out-of-enum value as `''`, no error) and to the `status_map`/`status_badge()` arrays repeated across ~11 view files (there is no shared status-label helper).
+
+Key branching logic to know before changing ticket flows (see `application/controllers/admin/Tickets.php::assign()`):
+- Whether a device is **in warranty** (`devices.warranty_end >= today`) determines whether an assigned technician/partner can just do the repair, or must first go through a quotation (`wait_confirm`) that the customer confirms/rejects over LINE.
+- Every status transition should be paired with a row in `ticket_logs` (see the private `_log()` helper in `Tickets.php`) — this is the audit trail shown in ticket detail/history views.
+- Quotations have their own table (`quotations`, one row per ticket, JSON-encoded `items`) separate from the summary fields (`quote_amount`, `quote_detail`, `quote_file`) denormalized onto `tickets` itself for LINE messages and list views.
+- `tickets` carries two separate quote amounts: `partner_quote_amount` (what an escalated-to partner proposed, set by the partner role) and `quote_amount` (the admin's own quote sent to the customer, written by `Tickets::save_quotation()`). `save_quotation()` enforces `quote_amount >= partner_quote_amount` as a floor (rejects with a flash error + redirect if violated); `Tickets::quotation()` also prefills the item rows from `partner_quote_detail`/`partner_quote_amount` so the admin starts at the partner's price rather than 0. There is still no ceiling — only a floor.
+- **Who currently owns a ticket** (`technician_id` vs `partner_id`) is disambiguated by whether `partner_id` is set, not by status alone — both columns can be non-null at once (history), so `partner_id IS NOT NULL` means "Partner is the active owner right now," checked as `$owned_by_tech = empty($ticket->partner_id)` in `views/technician/tickets/detail.php`. `Ticket_model::assign_technician()` clears `partner_id` back to `NULL` whenever admin (re)assigns a technician, so reclaiming a ticket from a partner is just a normal assign. Query filters that scope "this technician's tickets" (e.g. `History.php` in both `admin/` and `technician/`) must add `partner_id IS NULL`, or a ticket the tech handed off will still show up as theirs.
+- **Technicians don't pick their own repair dates.** `repair_categories` (name + `max_days`, admin-managed CRUD at `admin/Repair_categories.php`, nav "หมวดหมู่การซ่อม") is the only source of repair duration — `technician/Tickets.php::accept()` sets `tech_start_date = today` and computes `tech_end_date = today + category.max_days` server-side from the category the tech picked; `update_date()` re-picks a category and recomputes `tech_end_date` from the *original* `tech_start_date` (which never moves). There is no free-form date input left on the technician side; `partner/Tickets.php` still keeps its original free-form date pickers — this restriction was scoped to technicians only ("prevent lazy techs" was the stated reason), not partners.
+- **Overdue detection has no cron** — `Ticket_model::flag_overdue_repairs()` does a lazy bulk check (any `in_progress` ticket whose `tech_end_date` has passed → flips to `STATUS_WAITING_PARTS`, logs it, LINE-notifies the customer) and is called explicitly at the top of `index()`/`detail()` in `admin/Tickets.php`, `admin/Dashboard.php`, `technician/Tickets.php`, and `partner/Tickets.php`. It applies to any overdue `in_progress` ticket regardless of technician or partner ownership — if you add a new page that lists/shows tickets by status, call it there too or overdue tickets won't flip until some other page happens to be visited. Any hardcoded status whitelist (e.g. `where_in('status', [...])` on the dashboard's active-ticket queries) must include `'waiting_parts'` or overdue tickets silently vanish from that list.
+- **Mid-repair progress updates** live in their own table (`ticket_updates`: `ticket_id`, `user_id`, `message`, `images` JSON array, `created_at`), separate from `ticket_logs` (status-transition audit trail) — but the two are merged into one chronological feed for display by `Ticket_model::get_timeline($ticket_id)` (tags each entry `type: 'log'|'update'`, sorts by `created_at`), rendered as a single "ประวัติการดำเนินการ" list on both `admin/tickets/detail.php` and `technician/tickets/detail.php` (photo thumbnails inline on `update` entries). Because `get_timeline()` already surfaces `ticket_updates` rows, `technician/Tickets.php::send_update()` does **not** also write a `ticket_logs` row for the same event — don't add one, it would duplicate the entry in the merged feed. `send_update()` (pushes photo+note to the customer's LINE via `Line_notify::push_update()`, up to 4 images per push since LINE caps a single push at 5 messages) only works while `status === 'in_progress'` exactly (not `waiting_parts`, not once handed to a Partner) — intentionally narrower than the `in_progress`+`waiting_parts` window used elsewhere for "tech still owns this."
+- Assignment is now split by role: **admin only ever assigns a technician** (`admin/Tickets.php::assign()` — the partner_id branch was removed; the UI is a queue-ranked modal built by `_build_technician_queue()`, suggesting whichever active technician has no ticket overlapping today, tie-broken by fewest open tickets). **Only a technician can hand a ticket to a Partner**, via `technician/Tickets.php::escalate()` — the tech picks the partner directly (no more admin-mediated re-assignment) and can attach photos (`images[]` → `tickets.images` as a JSON filename array, uploaded to `uploads/tickets/`). The `escalated` status itself is now only reachable from *Partner*→Admin (`partner/Tickets.php::escalate()`, e.g. partner is in-warranty but still can't do the repair) — that's still admin-mediated and still shows the technician-queue modal.
+
+### LINE OA chatbot (`application/controllers/api/Line_webhook.php`)
+
+A single webhook endpoint (`webhook/line` → `api/line_webhook/handle`) implements a stateful text-based conversation flow entirely in PHP, no LINE LIFF/rich UI beyond Flex Messages:
+- Verifies `X-Line-Signature` via HMAC-SHA256 against `line_channel_secret` (`_verify_signature`) before processing anything.
+- Unlinked customers authenticate by texting a device serial number, then their registered phone number; short-lived state is tracked in dedicated tables (`line_verify`, `line_waiting_sn`, `line_repair_pending`) keyed by `line_uid`, checked/cleared at the top of `_process_message()` in a specific priority order — read that method's structure before adding a new stateful step, since state tables are checked sequentially and each can fall through to the next.
+- Keyword routing (แจ้งซ่อม/ตรวจสอบประกัน/สถานะ/ติดต่อแอดมิน) falls back to an LLM chatbot (`_handle_chatbot`) that calls OpenRouter (`openrouter_api_key`/`openrouter_model` in `app_config.php`) with the active FAQ table injected as system context.
+- Outbound messages go through `application/libraries/Line_notify.php` (`push()` for text, `push_flex()` for Flex Message cards, e.g. the quotation approve/reject card built in `Tickets::_build_quote_flex()`).
+- All strings and error/log messages in this controller are Thai — keep new user-facing LINE copy in Thai and in the same tone.
+
+### Routing
+
+`application/config/routes.php` hand-declares nearly every URL (CI3 default segment routing is not relied on for the main app) — when adding a controller method that needs a URL, add the explicit `$route[...]` entry rather than assuming default `controller/method/id` routing will reach it. `login`/`logout` map to `admin/auth/*` and are shared across all roles. Numeric ID segments use `(:num)`.
+
+### Front end
+
+No JS build pipeline. Views use server-rendered PHP with **Tailwind CSS via CDN** (`<script src="https://cdn.tailwindcss.com">` in `application/views/admin/layout/main.php`, Thai `Sarabun` web font) for all screens added under the current admin/tech/partner UI. The `vendors/` and `assets/` directories hold an older jQuery/Bootstrap admin-theme (DataTables, Chart.js, bootstrap-datetimepicker, etc.) — check whether a given view actually includes those assets before assuming they're live; new UI work in this app is Tailwind-first.
+
+### Flash messages → SweetAlert2 (per-view, not centralized)
+
+There is no shared "flash message" partial. The convention, repeated near the bottom of ~20 individual view files (e.g. `admin/tickets/index.php`, `admin/customers/form.php`, `technician/tickets/detail.php`): each view includes its own `<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>` tag plus an inline `<script>` block that checks `$this->session->flashdata('success')` / `flashdata('error')` and calls `Swal.fire({...})` if set. Controllers set flash data with `$this->session->set_flashdata('success'|'error', 'Thai message')` before `redirect()`, same as any CI3 app — the SweetAlert popup is just how that flashdata happens to get rendered in this codebase. There's no native `alert()`/`confirm()` anywhere in the views; when adding a flash message to a new view, copy the existing CDN-script + flashdata-check pattern from a sibling view rather than inventing a new mechanism, and note that not every view wires up both `success` and `error` — check what the controller actually sets before assuming a message will show.
+
+### Known cruft (don't be confused by it)
+
+- `application/controllers/files/` contains near-duplicate copies of some admin controllers (`Devices.php`, `Faq.php`, `Partners.php`, `Technicians.php`) plus a stray `Device_model.php` sitting in the controllers directory. Nothing in `routes.php` targets `files/*`, so these are legacy/orphaned — the canonical versions are under `application/controllers/admin/`. Don't edit the `files/` copies expecting them to affect the live app.
+- `application/views/backend/`, `application/views/frontend/`, `application/views/template/`, and `application/views/line/` are legacy/unused view scaffolding from an earlier iteration — the live app only renders through `application/views/admin/...` plus a few top-level views (`login.php`, `quotation/*`).
+
+## Conventions observed in the codebase
+
+- Controllers query the DB directly via `$this->db->...` (query builder) for read paths/joins even where a model exists; models mostly own writes and lifecycle helpers (`create`, `update_status`, etc.). Follow this split rather than moving all queries into models or vice versa.
+- All user-facing text (flash messages, LINE messages, UI labels) is Thai. Match this in new code.
+- Timestamps are plain `date('Y-m-d H:i:s')` strings set by PHP, not DB defaults — set `created_at`/`updated_at` explicitly when inserting/updating.
+- Timezone is force-set to `Asia/Bangkok` in the front controller (`index.php`).
