@@ -1,7 +1,10 @@
 .DS_Store
 
-# มี LINE channel token/secret และ OpenRouter API key จริงอยู่ในไฟล์นี้ ห้าม commit — ใช้ app_config.example.php เป็น template แทน
+# ไฟล์ config ที่ค่าต่างกันตามเครื่อง/เซิร์ฟ (secrets, DB credentials, base_url) ห้าม commit
+# ใช้ *.example.php เป็น template — pull ครั้งแรกต้อง copy ไปตั้งชื่อจริงแล้วกรอกค่าเองก่อนเว็บถึงจะรันได้
 application/config/app_config.php
+application/config/database.php
+application/config/config.php
 
 application/cache/*
 !application/cache/index.html

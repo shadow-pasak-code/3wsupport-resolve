@@ -23,7 +23,9 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 | a PHP script and you can easily do that on your own.
 |
 */
-$config['base_url'] = 'http://localhost/3wsupportv2';
+// คัดลอกไฟล์นี้เป็น config.php แล้วใส่ base_url จริงของเครื่อง/เซิร์ฟนี้ — ห้าม commit config.php (อยู่ใน .gitignore แล้ว)
+// เช่น local dev: 'http://localhost/3wsupportv2'  |  production: 'https://3wsupport.rtafsar.com'
+$config['base_url'] = '';
 
 /*
 |--------------------------------------------------------------------------

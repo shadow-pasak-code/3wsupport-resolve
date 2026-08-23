@@ -1,15 +1,17 @@
 <?php
 defined('BASEPATH') OR exit('No direct script access allowed');
 
+// คัดลอกไฟล์นี้เป็น database.php แล้วใส่ค่าจริงของเครื่อง/เซิร์ฟนี้ — ห้าม commit database.php (อยู่ใน .gitignore แล้ว)
+
 $active_group = 'default';
 $query_builder = TRUE;
 
 $db['default'] = array(
     'dsn'      => '',
     'hostname' => 'localhost',
-    'username' => 'root',       // เปลี่ยนตามค่าจริง
-    'password' => '',   // เปลี่ยนตามค่าจริง
-    'database' => 'rtaf_3wsupportv2',     // เปลี่ยนตามค่าจริง
+    'username' => '',       // ใส่ username จริง
+    'password' => '',       // ใส่ password จริง
+    'database' => '',       // ใส่ชื่อ database จริง
     'dbdriver' => 'mysqli',
     'dbprefix' => '',
     'pconnect' => FALSE,
