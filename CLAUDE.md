@@ -14,9 +14,8 @@ This is a classic XAMPP/Apache + MySQL PHP app — no CLI dev server, no build/w
 
 - Serve the repo root through Apache (e.g. XAMPP `htdocs`), with `mod_rewrite` enabled (`.htaccess` routes all non-file/dir requests through `index.php`).
 - Import a schema from `db/` (e.g. `db/rtaf_3wsupport (1).sql`) into MySQL as `rtaf_3wsupport`.
-- DB credentials: `application/config/database.php` (default `root` / no password / `rtaf_3wsupport`, `mysqli`, `utf8mb4`).
-- Site base URL: `application/config/config.php` (`$config['base_url']`) — update to match your local path.
-- Third-party integrations (LINE Messaging API tokens, OpenRouter/Gemini API key) live in `application/config/app_config.php`. **This file currently contains live secrets committed in plaintext** (LINE channel token/secret, OpenRouter API key) — treat it as sensitive, don't paste its contents elsewhere, and prefer moving secrets out of version control if you're asked to touch this file.
+- **`application/config/{app_config,database,config}.php` are all gitignored** — none of the three exist on a fresh clone, only their `*.example.php` siblings do. First-time setup on any machine/server: copy each `.example.php` to its real filename and fill in that environment's actual values (DB credentials in `database.php`, `$config['base_url']` in `config.php`, LINE/OpenRouter keys in `app_config.php`) — the app won't boot at all until this is done, CI can't load without `config.php`/`database.php` present. This exists specifically so a routine `git pull` can never silently overwrite a live environment's real DB credentials or base URL with whatever happened to be committed from another machine — never remove these three from `.gitignore`, and never hardcode a real secret or environment-specific value into the `.example` versions (keep those files generic/blank).
+- DB credentials on this dev machine: `root` / no password / `rtaf_3wsupportv2`, `mysqli`, `utf8mb4` (see your local `database.php`, not committed).
 - There is a duplicate `config.php`/`database.php` pair at the repo root — these are **not** the files CodeIgniter loads (CI only reads `application/config/*`); ignore the root copies unless specifically asked about them.
 - Ignore the stray root-level `test_gemini.php`, `test_partner.php`, and `phpinfo.php` — they're ad hoc debug scripts, not part of the app.
 
