@@ -14,11 +14,8 @@ class Tickets extends Admin_Controller
     {
         $this->Ticket_model->flag_overdue_repairs();
 
-        $status   = $this->input->get('status');
-        $type     = $this->input->get('type');
-        $filtered = $this->input->get('filtered');
-
-        $hide_done = ($filtered === null);
+        $status = $this->input->get('status');
+        $type   = $this->input->get('type');
 
         $filters = [
             'status' => $status,
@@ -37,26 +34,27 @@ class Tickets extends Admin_Controller
 
         if ($status) {
             $base_query->where('t.status', $status);
-        } elseif ($hide_done) {
-            $base_query->where_not_in('t.status', ['completed', 'closed']);
         }
 
         if ($type) {
             $base_query->where('t.ticket_type', $type);
         }
 
-        if ($hide_done && !$status) {
+        if (!$status) {
+            // ไม่ได้กรองสถานะ → โชว์ทุกใบเหมือนกันเสมอ (กดเมนูตรงๆ กับกด "กรอง" ทุกสถานะ ต้องได้ผลเท่ากัน)
+            // เรียงงานที่ยังค้างอยู่ไว้บนสุด งานเสร็จ/ปิดไปท้ายสุด — ต้องมีครบทุกสถานะใน FIELD
+            // เพราะสถานะที่ไม่อยู่ในลิสต์จะได้ค่า 0 แล้วเด้งไปบนสุดแทน
             $base_query->order_by("FIELD(t.status,
             'pending','approved','assigned','in_progress','waiting_parts',
-            'wait_quote','wait_review','wait_confirm','quote_accepted','quote_rejected','escalated'
+            'wait_quote','wait_review','wait_confirm','quote_accepted','quote_rejected','escalated',
+            'partner_completed','completed','closed'
         )", NULL, FALSE);
         } else {
             $base_query->order_by('t.created_at', 'DESC');
         }
 
-        $data['tickets']   = $base_query->order_by('c.company_name', 'ASC')->get()->result();
-        $data['filters']   = $filters;
-        $data['hide_done'] = $hide_done;
+        $data['tickets'] = $base_query->order_by('c.company_name', 'ASC')->get()->result();
+        $data['filters'] = $filters;
         $this->render('tickets/index', $data);
     }
 
@@ -195,6 +193,8 @@ class Tickets extends Admin_Controller
         redirect(base_url('admin/tickets'));
     }
 
+    // มอบหมายช่างเสมอ (ไม่ว่าประกันจะหมดหรือไม่) — ช่างเป็นคนตัดสินใจเองในหน้ารับงานว่าจะรับหรือส่งต่อ Partner
+    // และถ้าหมดประกัน ช่างจะเลือกหมวดหมู่การซ่อมก่อน แล้วค่อยกรอกใบเสนอราคาทีหลัง (ไม่ใช่ assign ตรงเข้า wait_quote แบบเดิมอีกต่อไป)
     public function assign($id)
     {
         $ticket = $this->Ticket_model->get_by_id($id);
@@ -202,50 +202,24 @@ class Tickets extends Admin_Controller
 
         $tech_id = $this->input->post('technician_id');
 
-        $today       = date('Y-m-d');
-        $in_warranty = !empty($ticket->warranty_end) && $ticket->warranty_end >= $today;
-
         if ($tech_id) {
             $tech = $this->db->get_where('technicians', ['id' => $tech_id])->row();
 
-            if ($in_warranty) {
-                // อยู่ในประกัน → assign ปกติ รอช่างรับงาน
-                $this->Ticket_model->assign_technician($id, $tech_id);
-                $this->_log(
-                    $id,
-                    $ticket->status,
-                    Ticket_model::STATUS_ASSIGNED,
-                    'Assign ให้ช่าง: ' . ($tech->name ?? $tech_id)
-                );
+            $this->Ticket_model->assign_technician($id, $tech_id);
+            $this->_log(
+                $id,
+                $ticket->status,
+                Ticket_model::STATUS_ASSIGNED,
+                'Assign ให้ช่าง: ' . ($tech->name ?? $tech_id)
+            );
 
-                if ($ticket->line_uid) {
-                    $this->line_notify->push(
-                        $ticket->line_uid,
-                        "🔧 Ticket #{$id} มอบหมายช่างแล้วครับ\n" .
-                            "ช่าง: " . ($tech->name ?? '') . "\n" .
-                            "รอช่างติดต่อนัดหมายครับ"
-                    );
-                }
-            } else {
-                // หมดประกัน → เหมือน Partner: สถานะ wait_quote รอช่างทำใบเสนอราคาก่อน
-                $this->Ticket_model->update_status($id, Ticket_model::STATUS_WAIT_QUOTE, [
-                    'technician_id' => $tech_id,
-                    'partner_id'    => null,
-                ]);
-                $this->_log(
-                    $id,
-                    $ticket->status,
-                    Ticket_model::STATUS_WAIT_QUOTE,
-                    'Assign ให้ช่าง (หมดประกัน รอทำใบเสนอราคา): ' . ($tech->name ?? $tech_id)
+            if ($ticket->line_uid) {
+                $this->line_notify->push(
+                    $ticket->line_uid,
+                    "🔧 Ticket #{$id} มอบหมายช่างแล้วครับ\n" .
+                        "ช่าง: " . ($tech->name ?? '') . "\n" .
+                        "รอช่างติดต่อนัดหมายครับ"
                 );
-
-                if ($ticket->line_uid) {
-                    $this->line_notify->push(
-                        $ticket->line_uid,
-                        "📋 Ticket #{$id} อยู่ระหว่างดำเนินการครับ\n" .
-                            "กำลังประเมินราคา จะแจ้งให้ทราบเร็วๆ นี้ครับ"
-                    );
-                }
             }
             $this->session->set_flashdata('success', 'มอบหมายช่างเรียบร้อยแล้ว');
         } else {
@@ -269,6 +243,21 @@ class Tickets extends Admin_Controller
             redirect(base_url('admin/tickets/detail/' . $id));
         }
 
+        // Admin แก้ข้อความ "รายละเอียด" ที่จะโชว์ในใบเสนอราคาก่อนส่งจริงได้ (ถ้าส่งมา)
+        $quote_detail   = $this->input->post('quote_detail', TRUE);
+        $detail_changed = false;
+        if ($quote_detail !== null && trim($quote_detail) !== '') {
+            $detail_changed = trim($quote_detail) !== trim((string) $ticket->quote_detail);
+            $this->db->update('tickets', ['quote_detail' => $quote_detail], ['id' => $id]);
+            // no-op ถ้ายังไม่มีใบของแอดมิน (เคสใบจากช่างที่ส่งตรงได้เลย ไม่ต้องออกใบซ้ำ)
+            $this->db->update('quotations', ['note' => $quote_detail], ['ticket_id' => $id]);
+            $ticket->quote_detail = $quote_detail;
+        } elseif (empty($ticket->quote_detail) && !empty($ticket->partner_quote_detail)) {
+            // ส่งตรงจากใบต้นฉบับโดยไม่แก้อะไร — คัดลอกรายละเอียดมาไว้ให้หน้าใบเสนอราคาฝั่งลูกค้าใช้แสดงผล
+            $this->db->update('tickets', ['quote_detail' => $ticket->partner_quote_detail], ['id' => $id]);
+            $ticket->quote_detail = $ticket->partner_quote_detail;
+        }
+
         $pdf_url = $ticket->quote_file
             ? base_url('uploads/quotations/' . $ticket->quote_file)
             : null;
@@ -282,7 +271,10 @@ class Tickets extends Admin_Controller
 
         // ตอนนี้ลูกค้าเห็นใบเสนอราคาแล้วจริงๆ ถึงจะเข้าสถานะ wait_confirm (รอลูกค้ายืนยัน)
         $this->Ticket_model->update_status($id, Ticket_model::STATUS_WAIT_CONFIRM);
-        $this->_log($id, $ticket->status, Ticket_model::STATUS_WAIT_CONFIRM, 'Admin ส่งใบเสนอราคาให้ลูกค้าแล้ว');
+        $log_msg = 'Admin ตรวจสอบใบเสนอราคาแล้ว และส่งขออนุมัติจากลูกค้าทาง Line (฿'
+            . number_format($ticket->quote_amount, 2) . ')'
+            . ($detail_changed ? ' — มีการแก้ไขรายละเอียดก่อนส่ง' : '');
+        $this->_log($id, $ticket->status, Ticket_model::STATUS_WAIT_CONFIRM, $log_msg);
         $this->session->set_flashdata('success', 'ส่งใบเสนอราคาให้ลูกค้าเรียบร้อยแล้ว');
         redirect(base_url('admin/tickets/detail/' . $id));
     }
@@ -402,15 +394,18 @@ class Tickets extends Admin_Controller
             // มีร่างใบเสนอราคาของ admin เองอยู่แล้ว (เช่นเคยออกไว้ก่อนหน้า) ใช้อันนี้ก่อน
             $prefill_items = $this->_parse_quote_detail_lines($ticket->quote_detail);
         } elseif (!$quotation && $ticket->partner_quote_detail) {
-            // ยังไม่เคยออกใบเสนอราคาเอง แต่ Partner ตีราคามาแล้ว ใช้เป็นราคาตั้งต้นให้ admin ปรับ (ห้ามต่ำกว่านี้)
+            // ยังไม่เคยออกใบเสนอราคาเอง แต่ช่าง/Partner ตีราคามาแล้ว ใช้เป็นราคาตั้งต้นให้ admin ตรวจสอบ
             $prefill_items = $this->_parse_quote_detail_lines($ticket->partner_quote_detail);
         } elseif (!$quotation && $ticket->partner_quote_amount) {
-            $prefill_items = [['name' => 'ค่าซ่อม (อ้างอิงราคาที่ Partner เสนอ)', 'qty' => 1, 'price' => (float)$ticket->partner_quote_amount]];
+            $origin_label = !empty($ticket->partner_id) ? 'Partner' : 'ช่าง';
+            $prefill_items = [['name' => 'ค่าซ่อม (อ้างอิงราคาที่' . $origin_label . 'เสนอ)', 'qty' => 1, 'price' => (float)$ticket->partner_quote_amount]];
         }
 
         $data['ticket']        = $ticket;
         $data['quotation']     = $quotation;
         $data['prefill_items'] = $prefill_items;
+        // ช่างในบริษัท → ล็อกยอดรวมไว้เท่าต้นฉบับ (ดีดราคาไม่ได้) / Partner → บวกส่วนต่างได้แต่ห้ามต่ำกว่า
+        $data['is_partner_quote'] = !empty($ticket->partner_id);
         $this->render('tickets/quotation', $data);
     }
 
@@ -428,10 +423,25 @@ class Tickets extends Admin_Controller
         $vat_amount = (float)$this->input->post('vat_amount');
         $total      = (float)$this->input->post('total');
 
-        if ($ticket->partner_quote_amount && $total < (float)$ticket->partner_quote_amount) {
-            $this->session->set_flashdata('error',
-                'ยอดรวมต้องไม่ต่ำกว่าราคาที่ Partner เสนอ (฿' . number_format($ticket->partner_quote_amount, 2) . ')');
-            redirect(base_url('admin/tickets/quotation/' . $ticket_id));
+        // ที่มาของใบเสนอราคาต้นฉบับต่างกัน กฎเรื่องราคาก็ต่างกัน:
+        //  - Partner (ผู้รับเหมาภายนอก) → บริษัทบวกส่วนต่างได้ แต่ห้ามต่ำกว่าที่ Partner เสนอ
+        //  - ช่างในบริษัท → ราคาที่ช่างตีมาคือราคาบริษัทอยู่แล้ว แอดมิน "ดีดราคา" ไม่ได้ ตรวจสอบ/แก้ข้อความได้อย่างเดียว
+        //    ถ้าตัวเลขผิดจริงต้องตีกลับให้ช่างแก้มาใหม่ ไม่ใช่แอดมินแก้ยอดเอง
+        if ($ticket->partner_quote_amount) {
+            $original = (float) $ticket->partner_quote_amount;
+
+            if (!empty($ticket->partner_id)) {
+                if ($total < $original) {
+                    $this->session->set_flashdata('error',
+                        'ยอดรวมต้องไม่ต่ำกว่าราคาที่ Partner เสนอ (฿' . number_format($original, 2) . ')');
+                    redirect(base_url('admin/tickets/quotation/' . $ticket_id));
+                }
+            } elseif (abs($total - $original) >= 0.01) {
+                $this->session->set_flashdata('error',
+                    'ยอดรวมต้องเท่ากับราคาที่ช่างเสนอ (฿' . number_format($original, 2) . ') — '
+                        . 'แอดมินแก้ไขได้เฉพาะรายละเอียด/ข้อความ หากราคาไม่ถูกต้องกรุณาให้ช่างแก้ใบเสนอราคามาใหม่');
+                redirect(base_url('admin/tickets/quotation/' . $ticket_id));
+            }
         }
 
         $existing = $this->db->get_where('quotations', ['ticket_id' => $ticket_id])->row();
@@ -466,14 +476,22 @@ class Tickets extends Admin_Controller
             'updated_at'   => date('Y-m-d H:i:s'),
         ], ['id' => $ticket_id]);
 
-        $this->_log(
-            $ticket_id,
-            $ticket->status,
-            $ticket->status,
-            'Admin ' . ($existing ? 'แก้ไข' : 'ออก') . 'ใบเสนอราคา ฿' . number_format($total, 2)
-        );
+        // บันทึกลงไทม์ไลน์ให้เห็นว่าแอดมินตรวจแล้วแก้อะไรบ้าง (ยอดเดิม → ยอดใหม่ ถ้ามีการเปลี่ยน)
+        if ($existing) {
+            $prev_total = (float) $existing->total;
+            $log_msg = abs($total - $prev_total) >= 0.01
+                ? 'Admin แก้ไขใบเสนอราคา: ฿' . number_format($prev_total, 2) . ' → ฿' . number_format($total, 2)
+                : 'Admin แก้ไขรายละเอียดใบเสนอราคา (ยอดรวมคงเดิม ฿' . number_format($total, 2) . ')';
+        } else {
+            $origin  = (float) ($ticket->partner_quote_amount ?: 0);
+            $log_msg = 'Admin ตรวจสอบใบเสนอราคาแล้ว ฿' . number_format($total, 2);
+            if ($origin && abs($total - $origin) >= 0.01) {
+                $log_msg .= ' (ต้นฉบับ ฿' . number_format($origin, 2) . ')';
+            }
+        }
+        $this->_log($ticket_id, $ticket->status, $ticket->status, $log_msg);
 
-        $this->session->set_flashdata('success', ($existing ? 'แก้ไข' : 'ออก') . 'ใบเสนอราคาเรียบร้อยแล้ว');
+        $this->session->set_flashdata('success', ($existing ? 'แก้ไข' : 'บันทึกการตรวจสอบ') . 'ใบเสนอราคาเรียบร้อยแล้ว');
         redirect(base_url('admin/tickets/detail/' . $ticket_id));
     }
 

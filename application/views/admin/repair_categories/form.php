@@ -31,6 +31,17 @@
                 <p class="text-xs text-slate-400 mt-1">ช่างเลือกหมวดหมู่นี้ตอนรับงาน ระบบจะคำนวณวันครบกำหนดให้อัตโนมัติจากจำนวนวันนี้</p>
             </div>
 
+            <div class="mb-5">
+                <label class="block text-sm font-medium text-slate-700 mb-1.5">คำสำคัญของอาการ (คั่นด้วย , )</label>
+                <textarea name="keywords" rows="3"
+                    placeholder="เช่น จอดับ,จอไม่ติด,จอแตก,หน้าจอ"
+                    class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"><?= isset($category) ? $category->keywords : '' ?></textarea>
+                <p class="text-xs text-slate-400 mt-1">
+                    ระบบจะเทียบคำเหล่านี้กับ "อาการที่ลูกค้าแจ้ง" แบบอัตโนมัติ ช่างจะเห็นเฉพาะหมวดหมู่ที่ตรงกับอาการเท่านั้นตอนเลือก —
+                    <b>เว้นว่างไว้</b> ถ้าอยากให้หมวดหมู่นี้เป็นตัวเลือกสำรอง โผล่เฉพาะตอนไม่มีหมวดหมู่ไหนตรงกับอาการเลย (เช่น "ตรวจเช็คทั่วไป")
+                </p>
+            </div>
+
             <?php if (isset($category)): ?>
                 <div class="mb-5">
                     <label class="flex items-center gap-2 cursor-pointer">

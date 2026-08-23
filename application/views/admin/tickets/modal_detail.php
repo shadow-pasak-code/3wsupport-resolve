@@ -78,7 +78,11 @@ $status_map = [
     </div>
 <?php elseif ($ticket->quote_amount): ?>
     <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
-        <p class="text-xs font-semibold text-purple-600 mb-1">ใบเสนอราคาจาก Partner</p>
+        <p class="text-xs font-semibold text-purple-600 mb-1">
+            ต้นฉบับ — ใบเสนอราคาจาก<?= !empty($ticket->partner_id)
+                ? 'Partner: ' . ($ticket->partner_name ?? '-')
+                : ('ช่าง' . ($ticket->technician_name ? ' ' . $ticket->technician_name : '')) ?>
+        </p>
         <p class="text-xl font-bold text-purple-800">฿<?= number_format($ticket->quote_amount, 2) ?></p>
     </div>
 <?php endif; ?>

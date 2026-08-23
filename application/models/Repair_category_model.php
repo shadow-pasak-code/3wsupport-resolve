@@ -39,4 +39,33 @@ class Repair_category_model extends CI_Model
             'updated_at' => date('Y-m-d H:i:s'),
         ], ['id' => $id]);
     }
+
+    // กรองหมวดหมู่ตามอาการที่ลูกค้าแจ้ง (issue_desc) โดยจับคำสำคัญ (keywords, คั่นด้วย comma) แบบ substring match
+    // หมวดหมู่ที่ keywords ว่าง (NULL) = fallback ทั่วไป โชว์เฉพาะตอนไม่มีหมวดหมู่ไหน match เลย
+    public function get_matching_categories($issue_desc)
+    {
+        $all      = $this->get_all(true);
+        $issue    = mb_strtolower((string) $issue_desc, 'UTF-8');
+        $matched  = [];
+        $fallback = [];
+
+        foreach ($all as $c) {
+            if (empty($c->keywords)) {
+                $fallback[] = $c;
+                continue;
+            }
+            foreach (explode(',', $c->keywords) as $kw) {
+                $kw = trim($kw);
+                if ($kw !== '' && mb_strpos($issue, mb_strtolower($kw, 'UTF-8')) !== false) {
+                    $matched[] = $c;
+                    break;
+                }
+            }
+        }
+
+        return [
+            'categories'   => $matched ?: $fallback,
+            'auto_matched' => !empty($matched),
+        ];
+    }
 }

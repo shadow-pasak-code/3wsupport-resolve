@@ -6,7 +6,7 @@ class Tickets extends Tech_Controller
     public function __construct()
     {
         parent::__construct();
-        $this->load->model('Ticket_model');
+        $this->load->model(['Ticket_model', 'Repair_category_model']);
         $this->load->library('Line_notify');
     }
 
@@ -27,10 +27,14 @@ class Tickets extends Tech_Controller
         $ticket = $this->Ticket_model->get_by_id($id);
         $this->_check_ownership($ticket);
 
-        $data['ticket']            = $ticket;
-        $data['partners']          = $this->db->get_where('partners', ['is_active' => 1])->result();
-        $data['repair_categories'] = $this->db->where('is_active', 1)->order_by('name', 'ASC')->get('repair_categories')->result();
-        $data['timeline']          = $this->Ticket_model->get_timeline($id);
+        // กรองหมวดหมู่การซ่อมตามอาการที่ลูกค้าแจ้ง (issue_desc) — เห็นเฉพาะที่เกี่ยวข้อง ไม่ใช่ลิสต์เต็มทุกครั้ง
+        $cat_match = $this->Repair_category_model->get_matching_categories($ticket->issue_desc);
+
+        $data['ticket']                 = $ticket;
+        $data['partners']               = $this->db->get_where('partners', ['is_active' => 1])->result();
+        $data['repair_categories']      = $cat_match['categories'];
+        $data['categories_auto_matched'] = $cat_match['auto_matched'];
+        $data['timeline']               = $this->Ticket_model->get_timeline($id);
 
         $this->render('tickets/detail', $data);
     }
@@ -79,7 +83,8 @@ class Tickets extends Tech_Controller
         redirect(base_url('tech/tickets/detail/' . $id));
     }
 
-    // รับงาน + เลือกหมวดหมู่การซ่อม (เฉพาะกรณีอยู่ในประกัน) — วันเสร็จคำนวณจากหมวดหมู่ ไม่ให้ช่างกำหนดวันเอง
+    // รับงาน + เลือกหมวดหมู่การซ่อม (ทั้งในและหมดประกัน) — วันเสร็จคำนวณจากหมวดหมู่ ไม่ให้ช่างกำหนดวันเอง
+    // ในประกัน: เข้า in_progress ทันที / หมดประกัน: เข้า wait_quote (เลือกหมวดหมู่ก่อน แล้วค่อยกรอกใบเสนอราคาทีหลัง)
     public function accept($id)
     {
         $ticket = $this->Ticket_model->get_by_id($id);
@@ -92,10 +97,15 @@ class Tickets extends Tech_Controller
             redirect(base_url('tech/tickets/detail/' . $id));
         }
 
+        $today       = date('Y-m-d');
+        $in_warranty = !empty($ticket->warranty_end) && $ticket->warranty_end >= $today;
+
         $start = date('Y-m-d');
         $end   = date('Y-m-d', strtotime("+{$category->max_days} day"));
 
-        $this->Ticket_model->update_status($id, Ticket_model::STATUS_IN_PROGRESS, [
+        $new_status = $in_warranty ? Ticket_model::STATUS_IN_PROGRESS : Ticket_model::STATUS_WAIT_QUOTE;
+
+        $this->Ticket_model->update_status($id, $new_status, [
             'repair_category_id' => $category->id,
             'tech_start_date'    => $start,
             'tech_end_date'      => $end,
@@ -106,8 +116,69 @@ class Tickets extends Tech_Controller
             'ticket_id'  => $id,
             'user_id'    => $this->current_user['id'],
             'old_status' => $ticket->status,
+            'new_status' => $new_status,
+            'message'    => 'ช่างรับงานแล้ว หมวดหมู่: ' . $category->name . ' (ไม่เกิน ' . $category->max_days . ' วัน)'
+                . ($in_warranty ? ' คาดว่าเสร็จ ' . date('d/m/Y', strtotime($end)) : ' — กำลังจัดทำใบเสนอราคา'),
+            'created_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        if ($ticket->line_uid) {
+            if ($in_warranty) {
+                $this->line_notify->push(
+                    $ticket->line_uid,
+                    "🔧 Ticket #{$id}\n" .
+                        "ส่งซ่อมสำเร็จแล้ว รอเปลี่ยนไม่เกิน {$category->max_days} วัน คาดว่าจะเสร็จวันที่ " . $this->_thai_short_date($end) . "\n" .
+                        "(โดยถ้ามีการเกินกว่า {$category->max_days} วันจะเปลี่ยนสถานะเป็น \"รออะไหล่\" แทน)"
+                );
+            } else {
+                $this->line_notify->push(
+                    $ticket->line_uid,
+                    "🔧 Ticket #{$id}\n" .
+                        "ช่างรับเรื่องแล้วครับ หมวดหมู่งานซ่อม: {$category->name} (ใช้เวลาไม่เกิน {$category->max_days} วันหลังเริ่มซ่อมจริง)\n" .
+                        "กำลังจัดทำใบเสนอราคา จะแจ้งราคาให้ทราบเร็วๆ นี้ครับ"
+                );
+            }
+        }
+
+        $this->session->set_flashdata('success', 'รับงานเรียบร้อยแล้ว');
+        redirect(base_url('tech/tickets/detail/' . $id));
+    }
+
+    // หลังลูกค้ายืนยันราคาแล้ว (quote_accepted) → เริ่มซ่อมจริง คำนวณวันใหม่จากวันนี้
+    // หมวดหมู่เลือกไว้ตั้งแต่ตอนรับงาน (accept) แล้ว ไม่ต้องเลือกซ้ำ
+    public function start_repair($id)
+    {
+        $ticket = $this->Ticket_model->get_by_id($id);
+        $this->_check_ownership($ticket);
+
+        if ($ticket->status !== Ticket_model::STATUS_QUOTE_ACCEPTED) {
+            $this->session->set_flashdata('error', 'สถานะ Ticket ไม่ถูกต้อง');
+            redirect(base_url('tech/tickets/detail/' . $id));
+        }
+
+        $category = $ticket->repair_category_id
+            ? $this->db->get_where('repair_categories', ['id' => $ticket->repair_category_id])->row()
+            : null;
+
+        if (!$category) {
+            $this->session->set_flashdata('error', 'ไม่พบหมวดหมู่การซ่อมที่เลือกไว้ กรุณาติดต่อ Admin');
+            redirect(base_url('tech/tickets/detail/' . $id));
+        }
+
+        $start = date('Y-m-d');
+        $end   = date('Y-m-d', strtotime("+{$category->max_days} day"));
+
+        $this->Ticket_model->update_status($id, Ticket_model::STATUS_IN_PROGRESS, [
+            'tech_start_date' => $start,
+            'tech_end_date'   => $end,
+        ]);
+
+        $this->db->insert('ticket_logs', [
+            'ticket_id'  => $id,
+            'user_id'    => $this->current_user['id'],
+            'old_status' => $ticket->status,
             'new_status' => Ticket_model::STATUS_IN_PROGRESS,
-            'message'    => 'ช่างรับงานแล้ว หมวดหมู่: ' . $category->name . ' (ไม่เกิน ' . $category->max_days . ' วัน) คาดว่าเสร็จ ' . date('d/m/Y', strtotime($end)),
+            'message'    => 'ช่างเริ่มดำเนินการซ่อม หมวดหมู่: ' . $category->name . ' คาดว่าเสร็จ ' . date('d/m/Y', strtotime($end)),
             'created_at' => date('Y-m-d H:i:s'),
         ]);
 
@@ -115,12 +186,12 @@ class Tickets extends Tech_Controller
             $this->line_notify->push(
                 $ticket->line_uid,
                 "🔧 Ticket #{$id}\n" .
-                    "ส่งซ่อมสำเร็จแล้ว รอเปลี่ยนไม่เกิน {$category->max_days} วัน คาดว่าจะเสร็จวันที่ " . $this->_thai_short_date($end) . "\n" .
+                    "เริ่มดำเนินการซ่อมแล้วครับ รอเปลี่ยนไม่เกิน {$category->max_days} วัน คาดว่าจะเสร็จวันที่ " . $this->_thai_short_date($end) . "\n" .
                     "(โดยถ้ามีการเกินกว่า {$category->max_days} วันจะเปลี่ยนสถานะเป็น \"รออะไหล่\" แทน)"
             );
         }
 
-        $this->session->set_flashdata('success', 'รับงานเรียบร้อยแล้ว');
+        $this->session->set_flashdata('success', 'เริ่มดำเนินการซ่อมเรียบร้อยแล้ว');
         redirect(base_url('tech/tickets/detail/' . $id));
     }
 
@@ -246,6 +317,13 @@ class Tickets extends Tech_Controller
         $ticket = $this->Ticket_model->get_by_id($id);
         $this->_check_ownership($ticket);
 
+        // ต้องส่งอัพเดทความคืบหน้าให้ลูกค้าอย่างน้อย 1 ครั้งก่อน ถึงจะกดเสร็จสิ้นได้ (กันช่างข้ามขั้นตอนแจ้งลูกค้า)
+        $update_count = $this->db->where('ticket_id', $id)->count_all_results('ticket_updates');
+        if ($update_count < 1) {
+            $this->session->set_flashdata('error', 'กรุณาส่งอัพเดทความคืบหน้าให้ลูกค้าอย่างน้อย 1 ครั้งก่อนกดยืนยันเสร็จสิ้น');
+            redirect(base_url('tech/tickets/detail/' . $id));
+        }
+
         $note     = $this->input->post('tech_note', TRUE) ?: $this->input->post('note', TRUE);
         $tracking = $this->input->post('tracking_no', TRUE);
 
@@ -304,6 +382,13 @@ class Tickets extends Tech_Controller
     {
         $ticket = $this->Ticket_model->get_by_id($id);
         $this->_check_ownership($ticket);
+
+        if (!empty($ticket->partner_id) || !in_array($ticket->status, [
+            Ticket_model::STATUS_ASSIGNED, Ticket_model::STATUS_IN_PROGRESS, Ticket_model::STATUS_WAITING_PARTS,
+        ])) {
+            $this->session->set_flashdata('error', 'ไม่สามารถส่งต่อ Partner ได้ในสถานะนี้');
+            redirect(base_url('tech/tickets/detail/' . $id));
+        }
 
         $note       = $this->input->post('note', TRUE);
         $partner_id = $this->input->post('partner_id');

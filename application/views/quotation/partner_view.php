@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ใบเสนอราคา Partner #<?= $ticket->id ?></title>
+    <title><?= $issuer_label ?> #<?= $ticket->id ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -32,13 +32,13 @@
     <div class="bg-white max-w-2xl mx-auto shadow-lg rounded-lg overflow-hidden">
         <div class="bg-purple-700 px-6 py-5 flex justify-between items-start">
             <div>
-                <h1 class="text-white text-xl font-bold">ใบเสนอราคา (Partner)</h1>
-                <p class="text-purple-200 text-xs mt-1">QUOTATION FROM PARTNER</p>
+                <h1 class="text-white text-xl font-bold"><?= $issuer_label ?></h1>
+                <p class="text-purple-200 text-xs mt-1"><?= $issuer_label_en ?></p>
             </div>
             <div class="text-right">
-                <p class="text-white font-semibold"><?= $partner->company_name ?? '—' ?></p>
-                <?php if ($partner && $partner->phone): ?>
-                    <p class="text-purple-200 text-xs"><?= $partner->phone ?></p>
+                <p class="text-white font-semibold"><?= $issuer_name ?></p>
+                <?php if ($issuer_phone): ?>
+                    <p class="text-purple-200 text-xs"><?= $issuer_phone ?></p>
                 <?php endif; ?>
             </div>
         </div>
@@ -130,7 +130,7 @@
             <?php endif; ?>
 
             <div class="border-t border-slate-100 pt-3 text-center">
-                <p class="text-xs text-slate-400"><?= $partner->company_name ?? '' ?></p>
+                <p class="text-xs text-slate-400"><?= $issuer_name ?></p>
             </div>
         </div>
     </div>

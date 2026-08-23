@@ -17,6 +17,7 @@
             <thead class="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                 <tr>
                     <th class="px-5 py-3 text-left">ชื่อหมวดหมู่</th>
+                    <th class="px-5 py-3 text-left">คำสำคัญของอาการ</th>
                     <th class="px-5 py-3 text-left">ระยะเวลาสูงสุด</th>
                     <th class="px-5 py-3 text-left">สถานะ</th>
                     <th class="px-5 py-3"></th>
@@ -25,12 +26,19 @@
             <tbody class="divide-y divide-slate-100">
                 <?php if (empty($categories)): ?>
                     <tr>
-                        <td colspan="4" class="px-5 py-12 text-center text-slate-400">ยังไม่มีหมวดหมู่การซ่อม</td>
+                        <td colspan="5" class="px-5 py-12 text-center text-slate-400">ยังไม่มีหมวดหมู่การซ่อม</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($categories as $c): ?>
                         <tr class="hover:bg-slate-50">
                             <td class="px-5 py-3 font-medium text-slate-800"><?= $c->name ?></td>
+                            <td class="px-5 py-3 text-xs text-slate-500 max-w-xs">
+                                <?php if ($c->keywords): ?>
+                                    <?= $c->keywords ?>
+                                <?php else: ?>
+                                    <span class="italic text-slate-400">— สำรอง (โผล่เมื่อไม่มีหมวดหมู่ไหนตรงอาการ)</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="px-5 py-3 text-slate-600">ไม่เกิน <?= $c->max_days ?> วัน</td>
                             <td class="px-5 py-3">
                                 <?php if ($c->is_active): ?>

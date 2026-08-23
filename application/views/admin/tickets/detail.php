@@ -110,45 +110,75 @@
                     <p class="text-sm text-green-700">✅ อุปกรณ์นี้ยังอยู่ในประกัน ไม่มีค่าใช้จ่ายสำหรับการซ่อม</p>
                 </div>
             <?php elseif ($ticket->quote_amount): ?>
+                <?php
+                // ช่างในบริษัทและ Partner ใช้คอลัมน์ partner_quote_amount/partner_quote_detail ร่วมกัน
+                // (Ticket_model::set_quote() เรียกจากทั้งสองฝั่ง) ต้องเช็ค partner_id เพื่อบอกที่มาให้ถูกจริง ไม่ใช่เขียนคำว่า Partner ตายตัว
+                $is_partner_quote = !empty($ticket->partner_id);
+                $quote_submitter  = $is_partner_quote
+                    ? 'Partner: ' . ($ticket->partner_name ?? '-')
+                    : ('ช่าง' . ($ticket->technician_name ? ' ' . $ticket->technician_name : ''));
+                ?>
                 <div class="bg-purple-50 border border-purple-200 rounded-xl p-5">
-                    <h2 class="text-sm font-semibold text-purple-700 mb-2">ใบเสนอราคาจาก Partner</h2>
+                    <h2 class="text-sm font-semibold text-purple-700 mb-1">ต้นฉบับ — ใบเสนอราคาที่ออกโดย<?= $quote_submitter ?></h2>
+                    <p class="text-xs text-purple-400 mb-2">
+                        <?= in_array($ticket->status, ['wait_review']) ? 'ยังไม่ได้ส่งให้ลูกค้า รอแอดมินตรวจสอบ' : 'เอกสารต้นทางจากผู้ปฏิบัติงาน' ?>
+                    </p>
                     <p class="text-2xl font-semibold text-purple-800 mb-1">฿<?= number_format($ticket->partner_quote_amount ?? $ticket->quote_amount, 2) ?></p>
-                    <p class="text-sm text-purple-600 mb-3"><?= nl2br($ticket->quote_detail) ?></p>
-                    <div class="flex gap-3 mb-3">
+                    <p class="text-sm text-purple-600 mb-3"><?= nl2br($ticket->partner_quote_detail ?? $ticket->quote_detail) ?></p>
+                    <div class="mt-3 pt-3 border-t border-purple-200 flex flex-wrap gap-3">
+                        <a href="<?= base_url('quotation/partner/' . $ticket->id) ?>" target="_blank"
+                            class="inline-block bg-white border border-purple-300 hover:bg-purple-50 text-purple-700 text-sm px-4 py-2 rounded-lg">
+                            📄 ดูใบเสนอราคาต้นฉบับ
+                        </a>
                         <?php if ($ticket->quote_file): ?>
                             <a href="<?= base_url('uploads/quotations/' . $ticket->quote_file) ?>" target="_blank"
                                 class="inline-flex items-center gap-1 text-sm text-purple-700 hover:underline">
                                 📎 ดูไฟล์แนบ
                             </a>
                         <?php endif; ?>
-                        <a href="<?= base_url('quotation/partner/' . $ticket->id) ?>" target="_blank"
-                            class="inline-flex items-center gap-1 text-sm text-purple-700 hover:underline">
-                            📄 ดูใบเสนอราคา Partner
-                        </a>
-                    </div>
-                    <div class="mt-3 pt-3 border-t border-purple-200 flex gap-3">
-                        <a href="<?= base_url('quotation/partner/' . $ticket->id) ?>" target="_blank"
-                            class="inline-block bg-white border border-purple-300 hover:bg-purple-50 text-purple-700 text-sm px-4 py-2 rounded-lg">
-                            📄 ดูใบ Partner
-                        </a>
-                        <?php if (!$admin_quotation && !$in_warranty): ?>
+                        <?php if (!$admin_quotation && $is_partner_quote): ?>
+                            <!-- Partner เท่านั้นที่ต้องออกใบในนามบริษัทใหม่ (บวกส่วนต่าง) -->
                             <a href="<?= base_url('admin/tickets/quotation/' . $ticket->id) ?>"
                                 class="inline-block bg-purple-600 hover:bg-purple-700 text-white text-sm px-4 py-2 rounded-lg">
                                 ✏️ ออกใบเสนอราคาในนามบริษัท
                             </a>
+                        <?php elseif (!$admin_quotation): ?>
+                            <a href="<?= base_url('admin/tickets/quotation/' . $ticket->id) ?>"
+                                class="inline-flex items-center gap-1 text-sm text-purple-700 hover:underline">
+                                ✏️ แก้ไขรายการ/ข้อความ
+                            </a>
                         <?php endif; ?>
                     </div>
+
+                    <?php if (!$admin_quotation && !$is_partner_quote && in_array($ticket->status, ['wait_review', 'wait_confirm'])): ?>
+                        <!-- ใบของช่างในบริษัท = ใช้ฉบับนี้ส่งลูกค้าได้เลย ไม่ต้องออกใบซ้ำอีกฉบับ
+                             (ราคาถูกล็อกไว้แล้ว แอดมินแค่ตรวจ + ปรับข้อความก่อนส่ง) -->
+                        <form method="POST" action="<?= base_url('admin/tickets/send_quote/' . $ticket->id) ?>"
+                            onsubmit="return confirm('ยืนยันว่าตรวจสอบแล้ว และส่งใบเสนอราคานี้ให้ลูกค้าผ่าน Line OA?')"
+                            class="mt-4 pt-4 border-t border-purple-200">
+                            <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
+                            <label class="block text-xs text-slate-600 mb-1">ข้อความ "รายละเอียด" ที่จะแสดงในใบเสนอราคา (แก้ไขได้ก่อนส่ง)</label>
+                            <textarea name="quote_detail" rows="3"
+                                class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            ><?= $ticket->quote_detail ?: $ticket->partner_quote_detail ?></textarea>
+                            <button type="submit"
+                                class="w-full bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg">
+                                ✅ ตรวจสอบแล้ว — ส่งขออนุมัติจากลูกค้าทาง Line
+                            </button>
+                        </form>
+                    <?php endif; ?>
                 </div>
             <?php endif; ?>
 
             <!-- ใบเสนอราคาของ Admin -->
             <?php if ($admin_quotation): ?>
                 <div class="bg-blue-50 border border-blue-200 rounded-xl p-5">
-                    <div class="flex items-center justify-between mb-3">
-                        <h2 class="text-sm font-semibold text-blue-700">ใบเสนอราคา (ออกโดยบริษัท)</h2>
+                    <div class="flex items-center justify-between mb-1">
+                        <h2 class="text-sm font-semibold text-blue-700">✅ ตรวจสอบแล้วโดยแอดมิน — ฉบับที่ใช้ส่งลูกค้า</h2>
                         <a href="<?= base_url('admin/tickets/quotation/' . $ticket->id) ?>"
                             class="text-xs text-blue-600 hover:underline">✏️ แก้ไข</a>
                     </div>
+                    <p class="text-xs text-blue-400 mb-2">ออกในนาม <?= $this->config->item('company_name') ?></p>
                     <p class="text-2xl font-semibold text-blue-800 mb-1">฿<?= number_format($admin_quotation->total, 2) ?></p>
                     <?php if ($admin_quotation->note): ?>
                         <p class="text-sm text-blue-600 mb-3"><?= nl2br($admin_quotation->note) ?></p>
@@ -159,18 +189,29 @@
                             class="inline-block bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">
                             📄 ดูใบเสนอราคา
                         </a>
-                        <?php if (in_array($ticket->status, ['wait_review', 'wait_confirm'])): ?>
-                            <a href="<?= base_url('admin/tickets/send_quote/' . $ticket->id) ?>"
-                                onclick="return confirm('ส่งใบเสนอราคาให้ลูกค้าผ่าน Line OA?')"
-                                class="inline-block bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg">
-                                📨 ส่งให้ลูกค้าผ่าน Line
-                            </a>
-                        <?php elseif ($ticket->status === 'quote_accepted'): ?>
+                        <?php if ($ticket->status === 'quote_accepted'): ?>
                             <span class="text-sm text-green-600 font-medium self-center">✅ ลูกค้ายืนยันแล้ว</span>
                         <?php elseif ($ticket->status === 'quote_rejected'): ?>
                             <span class="text-sm text-red-500 font-medium self-center">❌ ลูกค้าปฏิเสธ</span>
                         <?php endif; ?>
                     </div>
+
+                    <?php if (in_array($ticket->status, ['wait_review', 'wait_confirm'])): ?>
+                        <!-- แก้ข้อความ "รายละเอียด" ที่จะโชว์ในใบเสนอราคาก่อนส่งจริงได้ -->
+                        <form method="POST" action="<?= base_url('admin/tickets/send_quote/' . $ticket->id) ?>"
+                            onsubmit="return confirm('ส่งใบเสนอราคาให้ลูกค้าผ่าน Line OA?')"
+                            class="mt-3 pt-3 border-t border-blue-200">
+                            <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
+                            <label class="block text-xs text-slate-600 mb-1">ข้อความ "รายละเอียด" ที่จะแสดงในใบเสนอราคา (แก้ไขได้ก่อนส่ง)</label>
+                            <textarea name="quote_detail" rows="3"
+                                class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            ><?= $ticket->quote_detail ?></textarea>
+                            <button type="submit"
+                                class="w-full bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg">
+                                📨 ส่งให้ลูกค้าผ่าน Line
+                            </button>
+                        </form>
+                    <?php endif; ?>
                 </div>
 
                 <!-- ถ้ายังไม่มีใบเสนอราคาเลย -->

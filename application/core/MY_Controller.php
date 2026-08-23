@@ -15,6 +15,11 @@ class MY_Controller extends CI_Controller
 
     protected function render($view, $data = [], $layout = 'admin/layout/main')
     {
+        // กันเบราว์เซอร์เก็บหน้า dashboard ไว้ใน cache — ไม่งั้นกดเมนูซ้ำ (เช่น "จัดการ Ticket") แล้วเจอข้อมูลเก่าค้าง
+        // ต้องกดปุ่มกรอง/ค้นหาถึงจะยิง request ใหม่จริงๆ เพราะ query string เปลี่ยนไปบังคับให้ไม่ใช้ cache
+        $this->output->set_header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        $this->output->set_header('Pragma: no-cache');
+
         $data['current_user'] = $this->current_user;
         $data['content_view'] = $view;
         $this->load->view($layout, $data);

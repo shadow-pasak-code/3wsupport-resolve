@@ -94,6 +94,9 @@
             <div class="bg-purple-600 px-6 py-4">
                 <h2 class="text-white font-semibold text-lg">ใบเสนอราคา (หมดประกัน)</h2>
                 <p class="text-purple-200 text-sm">Ticket #<?= $ticket->id ?> · <?= date('d/m/Y') ?></p>
+                <?php if ($ticket->repair_category_name): ?>
+                    <p class="text-purple-100 text-xs mt-1">หมวดหมู่ที่เลือกไว้: <?= $ticket->repair_category_name ?> (ไม่เกิน <?= $ticket->repair_category_max_days ?> วัน)</p>
+                <?php endif; ?>
             </div>
             <form method="POST" action="<?= base_url('tech/tickets/quote/' . $ticket->id) ?>"
                 enctype="multipart/form-data" id="quote-form">
@@ -207,40 +210,52 @@
         </div>
     <?php endif; ?>
 
-    <!-- ลูกค้ายืนยันแล้ว → กำหนดวันคาดว่าจะเสร็จ (เหมือนบริบทในประกัน) -->
+    <!-- ลูกค้ายืนยันแล้ว → เริ่มซ่อมจริง (หมวดหมู่เลือกไว้ตั้งแต่ตอนรับงานแล้ว ไม่ต้องเลือกซ้ำ) -->
     <?php if ($ticket->status === 'quote_accepted' && $owned_by_tech): ?>
         <div class="bg-green-50 border border-green-200 rounded-xl p-5 mb-4">
             <p class="text-sm font-semibold text-green-700">✅ ลูกค้ายืนยันแล้ว — ดำเนินการซ่อมได้เลย</p>
             <p class="text-xl font-bold text-green-800 mt-1">฿<?= number_format($ticket->partner_quote_amount ?? $ticket->quote_amount, 2) ?></p>
         </div>
         <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 mb-4">
-            <h2 class="text-sm font-semibold text-indigo-700 mb-4">รับงานและเลือกหมวดหมู่การซ่อม</h2>
-            <form method="POST" action="<?= base_url('tech/tickets/accept/' . $ticket->id) ?>">
-                <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
-                <div class="mb-3">
-                    <label class="block text-xs text-slate-600 mb-1">หมวดหมู่การซ่อม <span class="text-red-500">*</span></label>
-                    <select name="repair_category_id" required
-                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <option value="">— เลือกหมวดหมู่ —</option>
-                        <?php foreach ($repair_categories as $rc): ?>
-                            <option value="<?= $rc->id ?>">
-                                <?= $rc->name ?> (ไม่เกิน <?= $rc->max_days ?> วัน)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <p class="text-xs text-slate-400 mt-1">ระบบจะคำนวณวันครบกำหนดให้อัตโนมัติจากหมวดหมู่ที่เลือก เริ่มนับจากวันนี้</p>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-xs text-slate-600 mb-1">หมายเหตุ (ถ้ามี)</label>
-                    <textarea name="note" rows="2"
-                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        placeholder="เช่น นัดลูกค้าส่งเครื่องวันที่..."></textarea>
-                </div>
-                <button type="submit"
-                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm py-2.5 rounded-lg">
-                    ✅ กำหนดหมวดหมู่และแจ้งลูกค้า
-                </button>
-            </form>
+            <h2 class="text-sm font-semibold text-indigo-700 mb-3">เริ่มดำเนินการซ่อม</h2>
+            <?php if ($ticket->repair_category_name): ?>
+                <p class="text-sm text-indigo-700 mb-4">
+                    หมวดหมู่ที่เลือกไว้: <span class="font-medium"><?= $ticket->repair_category_name ?></span>
+                    (ไม่เกิน <?= $ticket->repair_category_max_days ?> วัน — นับจากวันนี้)
+                </p>
+                <form method="POST" action="<?= base_url('tech/tickets/start_repair/' . $ticket->id) ?>">
+                    <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
+                    <button type="submit"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm py-2.5 rounded-lg">
+                        ✅ เริ่มซ่อมและแจ้งลูกค้า
+                    </button>
+                </form>
+            <?php else: ?>
+                <!-- เผื่อกรณี ticket เก่าที่ยังไม่เคยเลือกหมวดหมู่มาก่อน -->
+                <p class="text-xs text-amber-600 mb-3">⚠️ ยังไม่เคยเลือกหมวดหมู่การซ่อมสำหรับ ticket นี้ กรุณาเลือกก่อน</p>
+                <form method="POST" action="<?= base_url('tech/tickets/accept/' . $ticket->id) ?>">
+                    <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
+                    <div class="mb-3">
+                        <label class="block text-xs text-slate-600 mb-1">หมวดหมู่การซ่อม <span class="text-red-500">*</span></label>
+                        <p class="text-xs mb-1 <?= $categories_auto_matched ? 'text-emerald-600' : 'text-amber-600' ?>">
+                            <?= $categories_auto_matched ? '🔍 กรองตามอาการที่ลูกค้าแจ้งให้อัตโนมัติ' : '⚠️ ไม่พบหมวดหมู่ที่ตรงกับอาการที่แจ้ง แสดงตัวเลือกทั่วไปแทน' ?>
+                        </p>
+                        <select name="repair_category_id" required
+                            class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">— เลือกหมวดหมู่ —</option>
+                            <?php foreach ($repair_categories as $rc): ?>
+                                <option value="<?= $rc->id ?>">
+                                    <?= $rc->name ?> (ไม่เกิน <?= $rc->max_days ?> วัน)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <button type="submit"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm py-2.5 rounded-lg">
+                        ✅ กำหนดหมวดหมู่และแจ้งลูกค้า
+                    </button>
+                </form>
+            <?php endif; ?>
         </div>
     <?php endif; ?>
 
@@ -253,15 +268,23 @@
     <?php endif; ?>
 
     <!-- ================================================= -->
-    <!-- รับงาน (assigned) เฉพาะกรณีในประกัน -->
+    <!-- รับงาน (assigned) — ทั้งในและหมดประกัน เลือกหมวดหมู่ก่อนเสมอ ใบเสนอราคา (ถ้าหมดประกัน) จะโผล่หลังจากนี้ -->
     <!-- ================================================= -->
-    <?php if ($ticket->status === 'assigned' && $in_warranty && $owned_by_tech): ?>
-        <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 mb-4">
-            <h2 class="text-sm font-semibold text-indigo-700 mb-4">รับงานและเลือกหมวดหมู่การซ่อม</h2>
+    <?php if ($ticket->status === 'assigned' && $owned_by_tech): ?>
+        <div class="bg-slate-100 border border-slate-200 rounded-xl px-5 py-3 mb-3">
+            <p class="text-sm font-semibold text-slate-700">เลือกดำเนินการอย่างใดอย่างหนึ่ง</p>
+            <p class="text-xs text-slate-500 mt-0.5">ประเมินหน้างานแล้วเลือกว่าจะซ่อมเอง หรือส่งต่อให้ Partner</p>
+        </div>
+        <div class="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-5 mb-3">
+            <h2 class="text-sm font-semibold text-indigo-700 mb-1">✅ ตัวเลือกที่ 1 — ซ่อมเอง</h2>
+            <p class="text-xs text-indigo-500 mb-4">รับงานไว้ทำเอง เลือกหมวดหมู่เพื่อให้ระบบคำนวณวันครบกำหนด</p>
             <form method="POST" action="<?= base_url('tech/tickets/accept/' . $ticket->id) ?>">
                 <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
                 <div class="mb-3">
                     <label class="block text-xs text-slate-600 mb-1">หมวดหมู่การซ่อม <span class="text-red-500">*</span></label>
+                    <p class="text-xs mb-1 <?= $categories_auto_matched ? 'text-emerald-600' : 'text-amber-600' ?>">
+                        <?= $categories_auto_matched ? '🔍 กรองตามอาการที่ลูกค้าแจ้งให้อัตโนมัติ' : '⚠️ ไม่พบหมวดหมู่ที่ตรงกับอาการที่แจ้ง แสดงตัวเลือกทั่วไปแทน' ?>
+                    </p>
                     <select name="repair_category_id" required
                         class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="">— เลือกหมวดหมู่ —</option>
@@ -282,6 +305,48 @@
                 <button type="submit"
                     class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm py-2.5 rounded-lg">
                     ✅ รับงานและแจ้งลูกค้า
+                </button>
+            </form>
+        </div>
+    <?php endif; ?>
+
+    <!-- ส่งต่อให้ Partner (ซ่อมเองไม่ได้) — เห็นได้ตั้งแต่หน้ารับงาน (assigned) ไปจนถึงระหว่างกำลังซ่อม -->
+    <?php if (in_array($ticket->status, ['assigned', 'in_progress', 'waiting_parts']) && $owned_by_tech): ?>
+        <div class="bg-orange-50 <?= $ticket->status === 'assigned' ? 'border-2' : 'border' ?> border-orange-200 rounded-xl p-5 mb-4">
+            <?php if ($ticket->status === 'assigned'): ?>
+                <h2 class="text-sm font-semibold text-orange-700 mb-1">🔧 ตัวเลือกที่ 2 — ซ่อมเองไม่ได้ ส่งต่อให้ Partner</h2>
+                <p class="text-xs text-orange-500 mb-4">เกินขอบเขต/ไม่มีอะไหล่ ส่งงานให้ Partner ภายนอกดำเนินการแทน</p>
+            <?php else: ?>
+                <h2 class="text-sm font-semibold text-orange-700 mb-3">ส่งต่อให้ Partner (ซ่อมเองไม่ได้)</h2>
+            <?php endif; ?>
+            <form method="POST" action="<?= base_url('tech/tickets/escalate/' . $ticket->id) ?>"
+                enctype="multipart/form-data" id="escalate-form">
+                <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
+                <div class="mb-3">
+                    <label class="block text-xs text-slate-600 mb-1">เลือก Partner <span class="text-red-500">*</span></label>
+                    <select name="partner_id" required
+                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500">
+                        <option value="">— เลือก Partner —</option>
+                        <?php foreach ($partners as $p): ?>
+                            <option value="<?= $p->id ?>"><?= $p->company_name ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="block text-xs text-slate-600 mb-1">ระบุเหตุผล <span class="text-red-500">*</span></label>
+                    <textarea name="note" rows="2" required
+                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                        placeholder="เช่น ต้องเปลี่ยนอะไหล่นอก stock / ปัญหาเกินขอบเขต..."></textarea>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-xs text-slate-600 mb-1">แนบรูปภาพ (ถ้ามี — ถ่ายรูปอุปกรณ์/ปัญหาให้ Partner ดูก่อน)</label>
+                    <input type="file" name="images[]" accept="image/*" capture="environment" multiple
+                        class="w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200">
+                    <p class="text-xs text-slate-400 mt-1">JPG, PNG, WEBP ไฟล์ละไม่เกิน 8MB เลือกได้หลายรูป</p>
+                </div>
+                <button type="submit" onclick="return confirmEscalate()"
+                    class="w-full bg-orange-500 hover:bg-orange-600 text-white text-sm py-2.5 rounded-lg">
+                    ส่งต่อให้ Partner
                 </button>
             </form>
         </div>
@@ -315,6 +380,9 @@
                     <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
                     <div class="mb-3">
                         <label class="block text-xs text-slate-600 mb-1">หมวดหมู่การซ่อม</label>
+                        <p class="text-xs mb-1 <?= $categories_auto_matched ? 'text-emerald-600' : 'text-amber-600' ?>">
+                            <?= $categories_auto_matched ? '🔍 กรองตามอาการที่ลูกค้าแจ้งให้อัตโนมัติ' : '⚠️ ไม่พบหมวดหมู่ที่ตรงกับอาการที่แจ้ง แสดงตัวเลือกทั่วไปแทน' ?>
+                        </p>
                         <select name="repair_category_id" required
                             class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500">
                             <option value="">— เลือกหมวดหมู่ —</option>
@@ -386,41 +454,6 @@
                     onclick="return confirm('ยืนยันว่าซ่อมเสร็จแล้ว? ระบบจะแจ้งลูกค้าทันที')"
                     class="w-full bg-green-600 hover:bg-green-700 text-white text-sm py-2.5 rounded-lg">
                     ✅ ยืนยันเสร็จสิ้น (แจ้ง Line ลูกค้าอัตโนมัติ)
-                </button>
-            </form>
-        </div>
-
-        <!-- Escalate ส่ง Partner -->
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-5">
-            <h2 class="text-sm font-semibold text-orange-700 mb-3">ส่งต่อให้ Partner (ซ่อมเองไม่ได้)</h2>
-            <form method="POST" action="<?= base_url('tech/tickets/escalate/' . $ticket->id) ?>"
-                enctype="multipart/form-data" id="escalate-form">
-                <input type="hidden" name="<?= $this->security->get_csrf_token_name() ?>" value="<?= $this->security->get_csrf_hash() ?>">
-                <div class="mb-3">
-                    <label class="block text-xs text-slate-600 mb-1">เลือก Partner <span class="text-red-500">*</span></label>
-                    <select name="partner_id" required
-                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500">
-                        <option value="">— เลือก Partner —</option>
-                        <?php foreach ($partners as $p): ?>
-                            <option value="<?= $p->id ?>"><?= $p->company_name ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="mb-3">
-                    <label class="block text-xs text-slate-600 mb-1">ระบุเหตุผล <span class="text-red-500">*</span></label>
-                    <textarea name="note" rows="2" required
-                        class="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
-                        placeholder="เช่น ต้องเปลี่ยนอะไหล่นอก stock / ปัญหาเกินขอบเขต..."></textarea>
-                </div>
-                <div class="mb-4">
-                    <label class="block text-xs text-slate-600 mb-1">แนบรูปภาพ (ถ้ามี — ถ่ายรูปอุปกรณ์/ปัญหาให้ Partner ดูก่อน)</label>
-                    <input type="file" name="images[]" accept="image/*" capture="environment" multiple
-                        class="w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200">
-                    <p class="text-xs text-slate-400 mt-1">JPG, PNG, WEBP ไฟล์ละไม่เกิน 8MB เลือกได้หลายรูป</p>
-                </div>
-                <button type="submit" onclick="return confirmEscalate()"
-                    class="w-full bg-orange-500 hover:bg-orange-600 text-white text-sm py-2.5 rounded-lg">
-                    ส่งต่อให้ Partner
                 </button>
             </form>
         </div>

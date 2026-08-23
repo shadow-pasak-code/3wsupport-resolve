@@ -77,6 +77,7 @@ $route['tech/tickets/complete/(:num)']    = 'technician/tickets/complete/$1';
 $route['tech/tickets/escalate/(:num)']    = 'technician/tickets/escalate/$1';
 $route['tech/tickets/update_date/(:num)'] = 'technician/tickets/update_date/$1';
 $route['tech/tickets/send_update/(:num)'] = 'technician/tickets/send_update/$1';
+$route['tech/tickets/start_repair/(:num)'] = 'technician/tickets/start_repair/$1';
 $route['tech/tickets/quote/(:num)'] = 'technician/tickets/quote/$1';
 
 /*

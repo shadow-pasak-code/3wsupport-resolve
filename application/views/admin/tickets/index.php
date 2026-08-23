@@ -4,18 +4,15 @@
     <div class="flex items-center justify-between mb-6">
         <div>
             <h1 class="text-xl font-semibold text-slate-800">จัดการ Ticket</h1>
-            <?php if ($hide_done): ?>
-            <p class="text-xs text-slate-400 mt-0.5">แสดงเฉพาะ Ticket ที่ยังดำเนินการอยู่</p>
-            <?php endif; ?>
+            <p class="text-xs text-slate-400 mt-0.5">งานที่กำลังดำเนินการเรียงไว้บนสุด งานเสร็จ/ปิดอยู่ท้ายสุด</p>
         </div>
     </div>
 
     <!-- Filter bar -->
     <form method="GET" class="flex gap-3 mb-5 flex-wrap">
-        <input type="hidden" name="filtered" value="1">
         <select name="status"
             class="text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">ทุกสถานะ (รวมเสร็จแล้ว)</option>
+            <option value="">ทุกสถานะ</option>
             <?php
             $statuses = [
                 'pending'            => 'รออนุมัติ',

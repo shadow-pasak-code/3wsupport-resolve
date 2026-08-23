@@ -8,9 +8,24 @@
             </svg>
         </a>
         <h1 class="text-xl font-semibold">
-            <?= $quotation ? 'แก้ไขใบเสนอราคา' : 'ออกใบเสนอราคา' ?> Ticket #<?= $ticket->id ?>
+            <?= $quotation ? 'แก้ไขใบเสนอราคา' : 'ตรวจสอบใบเสนอราคา' ?> Ticket #<?= $ticket->id ?>
         </h1>
     </div>
+
+    <?php if ($ticket->partner_quote_amount && !$is_partner_quote): ?>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+            <p class="text-sm font-semibold text-amber-800">🔒 ยอดรวมถูกล็อกไว้ที่ ฿<?= number_format($ticket->partner_quote_amount, 2) ?></p>
+            <p class="text-xs text-amber-700 mt-1">
+                ใบนี้ออกโดยช่างในบริษัท แอดมินตรวจสอบและแก้ไขรายละเอียด/ข้อความได้ แต่ปรับยอดรวมไม่ได้
+                — หากราคาไม่ถูกต้อง กรุณาให้ช่างแก้ใบเสนอราคามาใหม่
+            </p>
+        </div>
+    <?php elseif ($ticket->partner_quote_amount && $is_partner_quote): ?>
+        <div class="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-5">
+            <p class="text-sm font-semibold text-purple-800">Partner เสนอราคามาที่ ฿<?= number_format($ticket->partner_quote_amount, 2) ?></p>
+            <p class="text-xs text-purple-700 mt-1">ปรับยอดขึ้นได้ตามส่วนต่างที่บริษัทกำหนด แต่ต้องไม่ต่ำกว่าราคานี้</p>
+        </div>
+    <?php endif; ?>
 
     <!-- ข้อมูล Ticket -->
     <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-5 text-sm">
@@ -22,8 +37,14 @@
             <div class="col-span-2"><span class="text-slate-400">อาการ:</span> <?= $ticket->issue_desc ?></div>
         </div>
         <?php if ($ticket->partner_quote_amount): ?>
+            <?php
+            // ช่างในบริษัทและ Partner ใช้คอลัมน์ partner_quote_amount ร่วมกัน ต้องเช็ค partner_id เพื่อบอกที่มาให้ถูก
+            $quote_submitter = !empty($ticket->partner_id)
+                ? 'Partner: ' . ($ticket->partner_name ?? '-')
+                : ($ticket->technician_name ?? 'ช่าง');
+            ?>
             <div class="mt-3 pt-3 border-t border-slate-200">
-                <p class="text-xs text-slate-400">ใบเสนอราคาจาก Partner: <span class="text-purple-700 font-semibold">฿<?= number_format($ticket->partner_quote_amount, 2) ?></span>
+                <p class="text-xs text-slate-400">ใบเสนอราคาจาก <?= $quote_submitter ?>: <span class="text-purple-700 font-semibold">฿<?= number_format($ticket->partner_quote_amount, 2) ?></span>
                     <?php if ($ticket->quote_file): ?>
                         · <a href="<?= base_url('uploads/quotations/' . $ticket->quote_file) ?>" target="_blank" class="text-blue-600 hover:underline">📎 ดูไฟล์</a>
                     <?php endif; ?>
@@ -136,7 +157,11 @@
                     </div>
                     <?php if ($ticket->partner_quote_amount): ?>
                         <p class="text-xs text-amber-600 mt-2 text-right">
-                            ⚠️ ห้ามตั้งยอดรวมต่ำกว่าราคาที่ Partner เสนอ (฿<?= number_format($ticket->partner_quote_amount, 2) ?>)
+                            <?php if ($is_partner_quote): ?>
+                                ⚠️ ห้ามตั้งยอดรวมต่ำกว่าราคาที่ Partner เสนอ (฿<?= number_format($ticket->partner_quote_amount, 2) ?>)
+                            <?php else: ?>
+                                🔒 ยอดรวมต้องเท่ากับราคาที่ช่างเสนอ (฿<?= number_format($ticket->partner_quote_amount, 2) ?>)
+                            <?php endif; ?>
                         </p>
                     <?php endif; ?>
                 </div>
@@ -168,7 +193,9 @@
     Swal.fire({ icon: 'error', title: 'ทำรายการไม่สำเร็จ', text: '<?= addslashes($this->session->flashdata('error')) ?>' });
 <?php endif; ?>
 
-    const PARTNER_QUOTE_FLOOR = <?= $ticket->partner_quote_amount ? (float)$ticket->partner_quote_amount : 0 ?>;
+    const ORIGINAL_QUOTE = <?= $ticket->partner_quote_amount ? (float)$ticket->partner_quote_amount : 0 ?>;
+    // ช่างในบริษัท → ยอดรวมต้องเท่าต้นฉบับเป๊ะ / Partner → เป็นแค่ราคาขั้นต่ำ บวกส่วนต่างขึ้นได้
+    const QUOTE_IS_LOCKED = <?= $is_partner_quote ? 'false' : 'true' ?>;
     let rowIndex = <?= count($existing_items) ?>;
 
     function addRow() {
@@ -247,13 +274,24 @@
             });
             return false;
         }
-        if (PARTNER_QUOTE_FLOOR > 0 && total < PARTNER_QUOTE_FLOOR) {
-            Swal.fire({
-                icon: 'warning',
-                title: 'ยอดรวมต่ำกว่าราคาที่ Partner เสนอ',
-                text: 'ห้ามตั้งราคาต่ำกว่า ฿' + PARTNER_QUOTE_FLOOR.toFixed(2) + ' ที่ Partner เสนอมา'
-            });
-            return false;
+        if (ORIGINAL_QUOTE > 0) {
+            if (QUOTE_IS_LOCKED && Math.abs(total - ORIGINAL_QUOTE) >= 0.01) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'ยอดรวมต้องเท่ากับราคาที่ช่างเสนอ',
+                    text: 'ยอดต้องเป็น ฿' + ORIGINAL_QUOTE.toFixed(2) + ' เท่านั้น แอดมินแก้ไขได้เฉพาะรายละเอียด/ข้อความ '
+                        + 'หากราคาไม่ถูกต้องกรุณาให้ช่างแก้ใบเสนอราคามาใหม่'
+                });
+                return false;
+            }
+            if (!QUOTE_IS_LOCKED && total < ORIGINAL_QUOTE) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'ยอดรวมต่ำกว่าราคาที่ Partner เสนอ',
+                    text: 'ห้ามตั้งราคาต่ำกว่า ฿' + ORIGINAL_QUOTE.toFixed(2) + ' ที่ Partner เสนอมา'
+                });
+                return false;
+            }
         }
         const subtotal = parseFloat(document.getElementById('subtotal-display').textContent) || 0;
         const vatAmt = parseFloat(document.getElementById('vat-display').textContent) || 0;

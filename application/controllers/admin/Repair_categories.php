@@ -29,6 +29,7 @@ class Repair_categories extends Admin_Controller
             $this->Repair_category_model->create([
                 'name'     => $name,
                 'max_days' => $max_days,
+                'keywords' => $this->input->post('keywords', TRUE) ?: null,
             ]);
 
             $this->session->set_flashdata('success', 'เพิ่มหมวดหมู่การซ่อมเรียบร้อยแล้ว');
@@ -55,6 +56,7 @@ class Repair_categories extends Admin_Controller
             $this->Repair_category_model->update($id, [
                 'name'      => $name,
                 'max_days'  => $max_days,
+                'keywords'  => $this->input->post('keywords', TRUE) ?: null,
                 'is_active' => $this->input->post('is_active') ? 1 : 0,
             ]);
 
